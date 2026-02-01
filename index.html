@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>Hollow Creek Farm</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="game-container">
+        <!-- Title Screen -->
+        <div id="title-screen" class="screen active">
+            <div class="title-content">
+                <h1 class="game-title">🌾 Hollow Creek 🌙</h1>
+                <p class="tagline">A cozy farming mystery</p>
+                <div class="title-art">
+                    <div class="scene">
+                        <span class="scene-bg">🏠</span>
+                        <span class="scene-fg">🌾🌾🌾</span>
+                    </div>
+                </div>
+                <button id="continue-btn" class="btn-primary hidden">Continue</button>
+                <p id="save-info" class="save-info hidden"></p>
+                <button id="start-btn" class="btn-primary">New Game</button>
+                <button id="how-to-btn" class="btn-secondary">How to Play</button>
+                <button id="delete-save-btn" class="btn-danger hidden">Delete Save</button>
+            </div>
+        </div>
+
+        <!-- Prologue Screen -->
+        <div id="prologue-screen" class="screen">
+            <div class="prologue-content">
+                <div id="prologue-text"></div>
+                <button id="prologue-continue" class="btn-primary">Continue</button>
+            </div>
+        </div>
+
+        <!-- How to Play Screen -->
+        <div id="how-to-screen" class="screen">
+            <div class="how-to-content">
+                <h2>How to Play</h2>
+                <div class="instructions">
+                    <div class="instruction-item">
+                        <span class="icon">🔍</span>
+                        <div>
+                            <strong>Investigate</strong>
+                            <p>Talk to villagers, explore locations, and gather clues about the dark secrets of Hollow Creek.</p>
+                        </div>
+                    </div>
+                    <div class="instruction-item">
+                        <span class="icon">🎁</span>
+                        <div>
+                            <strong>Build Trust</strong>
+                            <p>Give gifts to villagers to unlock gossip and secrets. Each villager has likes and dislikes!</p>
+                        </div>
+                    </div>
+                    <div class="instruction-item">
+                        <span class="icon">🌾</span>
+                        <div>
+                            <strong>Farm</strong>
+                            <p>Grow crops quickly to sell or gift. Flowers are great gifts!</p>
+                        </div>
+                    </div>
+                    <div class="instruction-item">
+                        <span class="icon">⚠️</span>
+                        <div>
+                            <strong>Race Against Time</strong>
+                            <p>The threat level rises daily. Find the killer before it's too late!</p>
+                        </div>
+                    </div>
+                </div>
+                <button id="back-to-title" class="btn-secondary">Back</button>
+            </div>
+        </div>
+
+        <!-- Main Game Screen -->
+        <div id="game-screen" class="screen">
+            <!-- Top HUD -->
+            <div id="top-hud">
+                <div class="hud-row">
+                    <span id="day-display">Day 1</span>
+                    <span id="time-display">☀️ Morning</span>
+                    <span id="actions-display">⚡ 4</span>
+                </div>
+                <div class="hud-row">
+                    <span id="coins-display">💰 30</span>
+                    <span id="threat-display">⚠️ Quiet</span>
+                </div>
+            </div>
+
+            <!-- Main Game Area -->
+            <div id="game-area">
+                <!-- Farm View -->
+                <div id="farm-view" class="view active">
+                    <div class="view-header">
+                        <h2>🏠 Your Farm</h2>
+                        <button id="rest-btn" class="btn-small">⏭️ Skip Time</button>
+                    </div>
+                    <div id="farm-grid"></div>
+                    <div class="inventory-section">
+                        <div class="inv-group">
+                            <h3>Seeds</h3>
+                            <div id="seed-slots"></div>
+                        </div>
+                        <div class="inv-group">
+                            <h3>Harvested</h3>
+                            <div id="harvest-slots"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Village View -->
+                <div id="village-view" class="view">
+                    <div class="view-header">
+                        <h2>🏘️ Villagers</h2>
+                    </div>
+                    <div id="villager-list"></div>
+                </div>
+
+                <!-- Explore View -->
+                <div id="explore-view" class="view">
+                    <div class="view-header">
+                        <h2>🗺️ Explore</h2>
+                    </div>
+                    <div id="location-list"></div>
+                </div>
+
+                <!-- Shop View -->
+                <div id="shop-view" class="view">
+                    <div class="view-header">
+                        <h2>🏪 General Store</h2>
+                    </div>
+                    <div id="shop-items"></div>
+                </div>
+
+                <!-- Clues View -->
+                <div id="clues-view" class="view">
+                    <div class="view-header">
+                        <h2>📓 Investigation</h2>
+                    </div>
+                    <div id="clues-list"></div>
+                    <div id="suspicion-panel"></div>
+                </div>
+            </div>
+
+            <!-- Bottom Navigation -->
+            <nav id="bottom-nav">
+                <button class="nav-btn active" data-view="farm">
+                    <span class="nav-icon">🏠</span>
+                    <span class="nav-label">Farm</span>
+                </button>
+                <button class="nav-btn" data-view="village">
+                    <span class="nav-icon">👥</span>
+                    <span class="nav-label">People</span>
+                </button>
+                <button class="nav-btn" data-view="explore">
+                    <span class="nav-icon">🗺️</span>
+                    <span class="nav-label">Explore</span>
+                </button>
+                <button class="nav-btn" data-view="shop">
+                    <span class="nav-icon">🏪</span>
+                    <span class="nav-label">Shop</span>
+                </button>
+                <button class="nav-btn" data-view="clues">
+                    <span class="nav-icon">📓</span>
+                    <span class="nav-label">Clues</span>
+                </button>
+                <button class="nav-btn" id="save-btn">
+                    <span class="nav-icon">💾</span>
+                    <span class="nav-label">Save</span>
+                </button>
+            </nav>
+        </div>
+
+        <!-- Villager Interaction Modal -->
+        <div id="villager-modal" class="modal">
+            <div class="modal-content villager-content">
+                <button id="close-modal" class="btn-close">✕</button>
+                <div id="villager-portrait" class="big-portrait"></div>
+                <h2 id="villager-name"></h2>
+                <p id="villager-role"></p>
+                <p id="villager-connection" class="story-connection"></p>
+                <div id="trust-meter">
+                    <span>Trust</span>
+                    <div class="meter-bar">
+                        <div id="trust-fill"></div>
+                    </div>
+                </div>
+                <div id="villager-dialogue" class="dialogue-box"></div>
+                <div id="villager-actions">
+                    <button id="talk-btn" class="btn-action">💬 Talk</button>
+                    <button id="gift-btn" class="btn-action">🎁 Gift</button>
+                    <button id="gossip-btn" class="btn-action">🗣️ Gossip</button>
+                    <button id="secret-btn" class="btn-action">🔍 Secret</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Gift Selection Modal -->
+        <div id="gift-modal" class="modal">
+            <div class="modal-content">
+                <button id="close-gift-modal" class="btn-close">✕</button>
+                <h2>Choose a Gift</h2>
+                <p class="gift-hint">❤️ = Loved | 💔 = Disliked</p>
+                <div id="gift-items"></div>
+            </div>
+        </div>
+
+        <!-- Accusation Modal -->
+        <div id="accuse-modal" class="modal">
+            <div class="modal-content">
+                <button id="close-accuse-modal" class="btn-close">✕</button>
+                <h2>⚠️ Make Accusation</h2>
+                <p class="accuse-warning">This is your ONLY chance. Choose the killer!</p>
+                <div id="accuse-list"></div>
+            </div>
+        </div>
+
+        <!-- Event Modal -->
+        <div id="event-modal" class="modal">
+            <div class="modal-content event-content">
+                <div id="event-icon" class="event-icon"></div>
+                <h2 id="event-title"></h2>
+                <p id="event-text"></p>
+                <div id="event-choices"></div>
+            </div>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="gameover-screen" class="screen">
+            <div class="gameover-content">
+                <h1 id="gameover-title"></h1>
+                <p id="gameover-text"></p>
+                <div id="gameover-reveal"></div>
+                <button id="play-again-btn" class="btn-primary">Play Again</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="game.js"></script>
+</body>
+</html>
