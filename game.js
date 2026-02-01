@@ -60,7 +60,24 @@ const gameState = {
     suspicions: {},
 
     // Relationships between NPCs you've discovered
-    discoveredRelationships: []
+    discoveredRelationships: [],
+
+    // Track choices made in story events (for branching)
+    eventChoices: {},
+
+    // Daily activity flags (reset each day, affect threat calculation)
+    dailyFlags: {
+        harvestedToday: false,
+        giftedToday: false,
+        soldToday: false,
+        talkedToVillager: false,
+        askedAboutMurder: false,      // Asked pointed questions about uncle's death
+        visitedForbiddenLocation: false, // Went to northfield, ruins, or deep mine
+        foundClueToday: false
+    },
+
+    // Track gift counts per villager (for relationship milestones)
+    giftCounts: {}
 };
 
 // Crop definitions - balanced growth (time periods, not days)
@@ -95,7 +112,31 @@ const CROPS = {
         growthTime: 3, // Quick but not instant
         sellPrice: 15,
         giftValue: 30, // Best for gifting!
-        seedCost: 8
+        seedCost: 8,
+        narrativeHint: "Marie Delacroix loved wildflowers..."
+    }
+};
+
+// Narrative uses for crops - connects farming to the mystery
+const CROP_USES = {
+    flower: {
+        storyEvent: 'marie_memorial',
+        requiresLocation: 'northfield',
+        description: "Place flowers on an unmarked grave",
+        hint: "Marie Delacroix loved wildflowers. Her grave lies forgotten in the north field..."
+    },
+    pumpkin: {
+        storyEvent: 'harvest_offering',
+        requiresLocation: 'ruins',
+        description: "Leave an offering at the old altar",
+        hint: "The autumn rituals required a harvest offering. The old church altar still stands..."
+    },
+    carrot: {
+        storyEvent: 'stable_bribe',
+        requiresVillager: 'farmer',
+        requiresTrust: 30,
+        description: "Silas's old horse needs feeding",
+        hint: "Silas mentioned his horse hasn't had fresh vegetables in weeks..."
     }
 };
 
@@ -123,7 +164,11 @@ const FISH = {
         sellPrice: 30,
         giftValue: 15,
         rarity: 0.20,
-        timeOfDay: ['evening']
+        timeOfDay: ['evening'],
+        clueFragment: {
+            text: "The catfish was hiding near a submerged metal box. Something's buried in the pond.",
+            requires: (gs) => gs.clues.length >= 2
+        }
     },
     eel: {
         name: 'Mysterious Eel',
@@ -132,7 +177,11 @@ const FISH = {
         giftValue: 10,
         rarity: 0.12,
         timeOfDay: ['evening'],
-        hint: "Old Barley says these eels only appeared after Ezekiel vanished."
+        hint: "Old Barley says these eels only appeared after Ezekiel vanished.",
+        clueFragment: {
+            text: "The eel came from a drainage tunnel beneath the pond. It leads somewhere underground.",
+            requires: (gs) => gs.clues.length >= 4
+        }
     },
     ghost_carp: {
         name: 'Ghost Carp',
@@ -162,7 +211,11 @@ const ORES = {
         sellPrice: 20,
         giftValue: 10,
         rarity: 0.30,
-        minLevel: 1
+        minLevel: 1,
+        clueFragment: {
+            text: "This iron ore has tool marks on it. Someone was mining here recently.",
+            requires: (gs) => gs.clues.length >= 3
+        }
     },
     silver: {
         name: 'Silver Ore',
@@ -170,7 +223,11 @@ const ORES = {
         sellPrice: 40,
         giftValue: 25,
         rarity: 0.15,
-        minLevel: 3
+        minLevel: 3,
+        clueFragment: {
+            text: "The silver vein runs deeper than it should. Your grandfather's notes mentioned silver near 'the chamber.'",
+            requires: (gs) => gs.clues.length >= 5 && gs.inventory.items.includes('grandfather_will')
+        }
     },
     gold: {
         name: 'Gold Ore',
@@ -178,7 +235,11 @@ const ORES = {
         sellPrice: 80,
         giftValue: 45,
         rarity: 0.08,
-        minLevel: 5
+        minLevel: 5,
+        clueFragment: {
+            text: "Gold this pure shouldn't be here. The mine records say the gold vein was exhausted in 1985—two years before grandfather vanished.",
+            requires: (gs) => gs.clues.length >= 6
+        }
     },
     strange_ore: {
         name: 'Strange Ore',
@@ -188,7 +249,11 @@ const ORES = {
         rarity: 0.02,
         minLevel: 7,
         special: true,
-        hint: "This ore pulses with an unnatural warmth. It shouldn't exist this far from volcanic activity."
+        hint: "This ore pulses with an unnatural warmth. It shouldn't exist this far from volcanic activity.",
+        clueFragment: {
+            text: "The strange ore throbs like a heartbeat. It's warm. Almost... alive. This is what grandfather found.",
+            requires: (gs) => true // Always triggers
+        }
     }
 };
 
@@ -541,9 +606,12 @@ const STORY_EVENTS = [
         ]
     },
     // === FIRST MEETING WITH SILAS ===
+    // Changed from day-based to condition-based: triggers after first farm action
     {
         id: 'meet_barley',
-        trigger: { day: 1, timeOfDay: 'afternoon', once: true },
+        trigger: { condition: (gs) => gs.eventsTriggered.includes('farmhouse_arrival') &&
+                                      (gs.dailyFlags.harvestedToday || gs.plots.some(p => p.state === 'growing')),
+                   once: true },
         icon: '👨‍🌾',
         title: 'The Man Who Sold the Farm',
         text: "An old man appears at your door - weathered face, trembling hands. 'I'm Silas Barley. Sold your uncle this land. I need to tell you something.' He looks over his shoulder. 'Your uncle came to me asking about the north field. What's buried there. I told him... I told him things I shouldn't have. Three days later, he was dead.'\n\nHe grips your arm. 'Don't dig in the north field. Don't ask about twenty years ago. Don't trust the Mayor. And for God's sake...' His voice drops. '...don't trust me either.'",
@@ -619,9 +687,14 @@ const STORY_EVENTS = [
         ]
     },
     // === WARNING ===
+    // Now requires clues AND having done something threatening (visited dangerous location or asked too many questions)
     {
         id: 'warning',
-        trigger: { condition: (gs) => gs.clues.length >= 5, once: true },
+        trigger: { condition: (gs) => gs.clues.length >= 5 &&
+                                      (gs.locationsUnlocked.includes('ruins') ||
+                                       gs.locationsUnlocked.includes('northfield') ||
+                                       gs.threatLevel >= 25),
+                   once: true },
         icon: '✉️',
         title: 'A Familiar Warning',
         text: "A note slides under your door, just as one must have slid under your uncle's:\n\n'You have until the next full moon to leave Hollow Creek. Your uncle ignored this warning. You see how that ended. The dead should stay buried. So should you.'\n\nThe handwriting is elegant. Educated. And at the bottom, a small symbol - the same one you saw in Iris's historical documents about the town's founding families.",
@@ -632,9 +705,10 @@ const STORY_EVENTS = [
         ]
     },
     // === SOMEONE KNOWS ===
+    // Changed from day-based to threat-based: triggers when you're making real progress
     {
         id: 'followed',
-        trigger: { day: 3, timeOfDay: 'evening', once: true },
+        trigger: { condition: (gs) => gs.threatLevel >= 35 && gs.clues.length >= 4, once: true },
         icon: '👁️',
         title: 'You\'re Being Watched',
         text: "Walking home from the inn, you notice a shadow following you. When you stop, it stops. When you turn, you catch a glimpse - someone ducking behind the smithy.\n\nYou're being followed. Watched. They know you're getting close.\n\nIn your farmhouse, you find another message, this one carved into your kitchen table: 'LAST WARNING'",
@@ -645,9 +719,15 @@ const STORY_EVENTS = [
         ]
     },
     // === MINE DISCOVERY ===
+    // Changed from day-based to progress-based: requires pickaxe AND clues about grandfather
     {
         id: 'mine_opened',
-        trigger: { day: 3, once: true },
+        trigger: { condition: (gs) => gs.inventory.items.includes('pickaxe') &&
+                                      gs.clues.length >= 4 &&
+                                      gs.clues.some(c => c.text.toLowerCase().includes('grandfather') ||
+                                                        c.text.toLowerCase().includes('ezekiel') ||
+                                                        c.text.toLowerCase().includes('mine')),
+                   once: true },
         icon: '⛏️',
         title: 'The Sealed Mine',
         text: "You find the entrance to your grandfather's mine - boarded up, chains rusted, warning signs faded. But the padlock is new. Someone's been here recently.\n\nAs you approach, you hear it: a low hum from deep underground. Not mechanical. Almost... organic.\n\nThe boards are old enough to pry loose. Behind them, darkness waits.",
@@ -694,6 +774,78 @@ const STORY_EVENTS = [
             { text: "Confront Viktor with this.", effectId: 'grandfather_viktor' },
             { text: "Document everything first. Build a case.", effectId: 'grandfather_document' },
             { text: "Tell Iris. She needs to see this.", effectId: 'grandfather_iris' }
+        ]
+    },
+
+    // ==========================================
+    // CROP-TRIGGERED STORY EVENTS
+    // These connect farming to the mystery narrative
+    // ==========================================
+
+    // === MARIE'S MEMORIAL - Requires flowers + north field unlocked ===
+    {
+        id: 'marie_memorial',
+        trigger: { condition: (gs) => gs.inventory.crops.flower >= 1 &&
+                                      gs.locationsUnlocked.includes('northfield') &&
+                                      gs.currentLocation === 'northfield',
+                   once: true },
+        icon: '🌸',
+        title: 'Flowers for the Forgotten',
+        text: "You kneel beside the depression in the earth—the place where nothing grows—and lay the wildflowers gently on the soil.\n\nThe wind stills. The birds go quiet.\n\nAnd then you hear it: a voice like rustling leaves. 'Thank you. No one has brought me flowers since... since he buried me here.'\n\nYou don't see her, but you feel her presence. Marie Delacroix. Twenty years dead, twenty years forgotten.\n\n'The Mayor's son strangled me in the old church. His father watched. The farmer buried me. The doctor wrote lies. They all knew. They all helped.'\n\nThe voice fades, but her words remain.",
+        choices: [
+            { text: "\"Who else was there that night?\"", effectId: 'marie_names' },
+            { text: "\"I'll make them pay for what they did to you.\"", effectId: 'marie_vengeance' },
+            { text: "\"Rest now. I'll find justice for you.\"", effectId: 'marie_peace' }
+        ]
+    },
+
+    // === HARVEST OFFERING - Requires pumpkin + ruins unlocked ===
+    {
+        id: 'harvest_offering',
+        trigger: { condition: (gs) => gs.inventory.crops.pumpkin >= 1 &&
+                                      gs.locationsUnlocked.includes('ruins') &&
+                                      gs.currentLocation === 'ruins',
+                   once: true },
+        icon: '🎃',
+        title: 'The Autumn Ritual',
+        text: "The old altar stands at the heart of the ruined church, its stone surface stained dark with age—or something else.\n\nYou place the pumpkin on the altar. It feels right, somehow. Like completing a circuit.\n\nThe stone beneath the pumpkin begins to glow faintly. Words appear, carved into the altar's surface—words that weren't visible before:\n\n'HARVEST MOON 1952. HARVEST MOON 1967. HARVEST MOON 1987. HARVEST MOON 2006.'\n\nDates. Twenty years apart. 1987—the year your grandfather vanished.\n\nBeneath the dates: 'THE HOLLOW FEEDS. THE HOLLOW GROWS. THE HOLLOW WAITS.'",
+        choices: [
+            { text: "Copy down the dates—they're evidence.", effectId: 'offering_evidence' },
+            { text: "Smash the altar. End whatever this is.", effectId: 'offering_smash' },
+            { text: "The next date would be 2026... this year.", effectId: 'offering_realization' }
+        ]
+    },
+
+    // === THE BAKER'S TRUST - Requires gifting Rosa multiple times ===
+    {
+        id: 'baker_trust',
+        trigger: { condition: (gs) => (gs.giftCounts?.baker || 0) >= 3 &&
+                                      gs.villagers.find(v => v.id === 'baker')?.trust >= 50,
+                   once: true },
+        icon: '🥐',
+        title: 'Rosa\'s Confession',
+        text: "Rosa closes the bakery early. Her hands shake as she locks the door.\n\n'You've been kind to me. Kinder than anyone in this town has been in five years.' She turns to face you, eyes wet. 'My name isn't Rosa Delacroix. It's Rosa Moreau. Delacroix was my sister's name. Marie Delacroix.'\n\nShe sits heavily. 'The Mayor's son killed her. I came here to make Edmund Thornwood suffer—slowly, through his morning tea. Sage helps me with the herbs.'\n\nShe looks up at you. 'Your uncle found out. I thought he'd stop me, but... he understood. He said he'd help expose the truth first. Then he died, just like my sister did.'\n\n'I didn't kill him. I swear it. But I know who did. And I'll tell you—because you've earned it.'",
+        choices: [
+            { text: "\"Who killed my uncle, Rosa?\"", effectId: 'rosa_reveal_killer' },
+            { text: "\"I understand why you did this. I won't stop you.\"", effectId: 'rosa_accept' },
+            { text: "\"The poisoning has to stop. Help me find justice another way.\"", effectId: 'rosa_justice' }
+        ]
+    },
+
+    // === SILAS'S GRATITUDE - Requires gifting Silas carrots ===
+    {
+        id: 'silas_gratitude',
+        trigger: { condition: (gs) => (gs.giftCounts?.farmer || 0) >= 2 &&
+                                      gs.villagers.find(v => v.id === 'farmer')?.trust >= 40 &&
+                                      gs.inventory.crops.carrot >= 1,
+                   once: true },
+        icon: '🥕',
+        title: 'The Old Farmer\'s Debt',
+        text: "Silas's eyes light up when he sees the carrots. 'For Bessie? You remembered.' He feeds the ancient horse, who nuzzles his hand.\n\n'You're not like them,' he says quietly, not looking at you. 'Not like the others who came asking questions. They wanted to use what I know. You just... helped.'\n\nHe reaches into his coat and pulls out a folded paper, yellowed with age. 'I've kept this for twenty years. Waiting for someone I could trust.'\n\nIt's a hand-drawn map of the north field. X marks dot the soil. One is labeled 'Marie.' Others are numbered. One through seven.\n\n'I didn't bury just one body for Edmund Thornwood. I buried seven.'",
+        choices: [
+            { text: "\"Seven? Over how many years?\"", effectId: 'silas_seven' },
+            { text: "\"Give me the shovel. Show me where.\"", effectId: 'silas_dig' },
+            { text: "\"Why didn't you go to the police?\"", effectId: 'silas_coward' }
         ]
     }
 ];
@@ -924,6 +1076,96 @@ const EVENT_EFFECTS = {
         addClue('Iris (KEY)', "Iris wept when she saw the remains. 'Father... all these years, I thought you abandoned us. They killed you too.'");
         addKeyEvidence('iris_grief', 'Iris now knows her father was murdered like her brother');
         modifyTrust('librarian', 30);
+    },
+
+    // ==========================================
+    // CROP-TRIGGERED EVENT EFFECTS
+    // ==========================================
+
+    // === MARIE'S MEMORIAL ===
+    marie_names: () => {
+        addClue('Marie Delacroix (KEY)', "Marie's spirit named them: the Mayor's son strangled her, Edmund watched, Silas buried her, the doctor lied. Four people. Four conspirators.");
+        addKeyEvidence('marie_testimony', 'The victim herself named her killers');
+        gameState.inventory.crops.flower--; // Flowers used
+        gameState.threatLevel += 15; // The dead are stirring
+    },
+    marie_vengeance: () => {
+        addClue('Marie Delacroix (KEY)', "I promised Marie vengeance. Her presence grew warmer, almost grateful. 'Make them remember me.'");
+        addKeyEvidence('marie_pact', 'Made a pact with Marie\'s spirit');
+        gameState.inventory.crops.flower--;
+        gameState.playerMotivation = 'vengeance';
+        gameState.threatLevel += 20;
+    },
+    marie_peace: () => {
+        addClue('Marie Delacroix (KEY)', "I promised Marie justice, not revenge. 'Justice,' she whispered. 'I had forgotten that word.' The wind grew gentle.");
+        addKeyEvidence('marie_peace', 'Promised to bring justice for Marie');
+        gameState.inventory.crops.flower--;
+        gameState.threatLevel += 10; // Less aggressive approach
+    },
+
+    // === HARVEST OFFERING ===
+    offering_evidence: () => {
+        addClue('The Ritual (KEY)', "Ritual dates: 1952, 1967, 1987, 2006. Every 20 years, something happens. 1987 was when grandfather vanished. 2026 is this year.");
+        addKeyEvidence('ritual_dates', 'Discovered the 20-year ritual cycle');
+        gameState.inventory.crops.pumpkin--;
+        gameState.inventory.items.push('ritual_dates');
+    },
+    offering_smash: () => {
+        addClue('The Ritual', "I smashed the altar. The ground trembled. From deep below, something SCREAMED. The whole village must have heard it.");
+        gameState.inventory.crops.pumpkin--;
+        gameState.threatLevel += 35; // You've angered something
+        addClue('Personal', "The altar is destroyed, but I've made enemies. Something beneath the town knows I'm here.");
+    },
+    offering_realization: () => {
+        addClue('The Ritual (KEY)', "2006... 2026. The next ritual is THIS YEAR. The Harvest Moon is coming. Whatever they've been feeding for seventy years is about to feed again.");
+        addKeyEvidence('ritual_imminent', 'The next ritual is this year');
+        gameState.inventory.crops.pumpkin--;
+        gameState.threatLevel += 25;
+        addClue('The Ritual', "I need to stop them before Harvest Moon. The pattern is clear: every 20 years, someone dies to feed the Hollow.");
+    },
+
+    // === BAKER'S TRUST ===
+    rosa_reveal_killer: () => {
+        addClue('Rosa (KEY)', "Rosa told me who killed my uncle. She saw them leaving the inn that night. The killer is someone I've already met.");
+        addKeyEvidence('rosa_witness', 'Rosa witnessed the killer leaving the inn');
+        // This is a major revelation - it points to the actual killer
+        const killer = gameState.villagers.find(v => v.id === gameState.killer);
+        if (killer) {
+            addClue('The Killer', `Rosa whispered a name: "${killer.name}." She saw them leave uncle's room. She's been too scared to speak until now.`);
+        }
+        modifyTrust('baker', 25);
+    },
+    rosa_accept: () => {
+        addClue('Rosa', "I told Rosa I understood her need for revenge. She wept. 'Thank you for not judging me. Your uncle said the same thing.'");
+        modifyTrust('baker', 30);
+        modifyTrust('herbalist', 15);
+        addClue('Personal', "I've chosen to let Rosa continue poisoning the Mayor. Justice or revenge? The line is blurring.");
+    },
+    rosa_justice: () => {
+        addClue('Rosa', "I convinced Rosa to stop the poisoning. 'If we expose the truth publicly, it will hurt Edmund more than any poison.' She agreed, reluctantly.");
+        modifyTrust('baker', 15);
+        modifyTrust('herbalist', -10); // Sage disagrees
+        addClue('Personal', "Rosa will help me expose the conspiracy through evidence, not poison. The legal way.");
+    },
+
+    // === SILAS'S GRATITUDE ===
+    silas_seven: () => {
+        addClue('Silas (KEY)', "Seven bodies over seventy years. Every twenty years, three or four more. 'The Hollow must feed,' Edmund told Silas. 'It's always been this way.'");
+        addKeyEvidence('mass_graves', 'Seven bodies buried in the north field over 70 years');
+        gameState.inventory.items.push('burial_map');
+        modifyTrust('farmer', 30);
+    },
+    silas_dig: () => {
+        addClue('Silas (KEY)', "Silas led me to the graves. Seven mounds, carefully tended by guilt. 'Dig,' he said. 'Let them be found. I'm tired of carrying this alone.'");
+        addKeyEvidence('burial_locations', 'Silas revealed all seven burial locations');
+        gameState.inventory.items.push('burial_map');
+        gameState.threatLevel += 20;
+        modifyTrust('farmer', 35);
+    },
+    silas_coward: () => {
+        addClue('Silas', "I asked why he never went to the police. He laughed bitterly. 'The sheriff in '87 was Edmund's uncle. The one in '52 was his grandfather. This town has always belonged to them.'");
+        addClue('The Conspiracy', "The Thornwood family has controlled Hollow Creek for generations. Law, medicine, land. The conspiracy isn't new—it's ancient.");
+        modifyTrust('farmer', 10);
     }
 };
 
@@ -1065,6 +1307,19 @@ function initGame() {
     gameState.suspicions = {};
     gameState.discoveredRelationships = [];
     gameState.playerMotivation = 'find_truth';
+
+    // Initialize new story integration systems
+    gameState.eventChoices = {};
+    gameState.giftCounts = {};
+    gameState.dailyFlags = {
+        harvestedToday: false,
+        giftedToday: false,
+        soldToday: false,
+        talkedToVillager: false,
+        askedAboutMurder: false,
+        visitedForbiddenLocation: false,
+        foundClueToday: false
+    };
 
     // Reset inventory - you start with your uncle's letter and grandfather's will
     gameState.inventory = {
@@ -1530,8 +1785,12 @@ function endDay() {
     gameState.timeOfDay = 'morning';
     gameState.actionsRemaining = 4;
 
-    // Threat increases each day
-    gameState.threatLevel += 5 + gameState.day * 2;
+    // Calculate threat based on player actions, not just time
+    const dailyThreat = calculateDailyThreat();
+    gameState.threatLevel += dailyThreat;
+
+    // Reset daily flags for new day
+    resetDailyFlags();
 
     // Unlock new locations based on day
     checkLocationUnlocks();
@@ -1542,17 +1801,69 @@ function endDay() {
         return;
     }
 
-    // Possible murder after day 3
-    if (gameState.day >= 4 && gameState.threatLevel >= 50 && Math.random() < 0.25) {
+    // Possible murder - only when threat is high AND you've been aggressive
+    if (gameState.day >= 4 && gameState.threatLevel >= 60 && Math.random() < 0.20) {
         triggerMurder();
     }
 
-    showEvent('🌅', `Day ${gameState.day}`, 'A new day dawns. The village feels more tense than before...', [
+    // Day summary message varies based on threat
+    const dayMessage = getDayMessage(dailyThreat);
+    showEvent('🌅', `Day ${gameState.day}`, dayMessage, [
         { text: 'Continue', effectId: null }
     ]);
 
     renderAll();
     autoSave();
+}
+
+// Calculate threat based on player activities - cozy actions reduce threat
+function calculateDailyThreat() {
+    let threat = 2; // Small base increase (was 5 + day*2)
+
+    // Investigation activities INCREASE threat (you're poking around)
+    if (gameState.dailyFlags.askedAboutMurder) threat += 4;
+    if (gameState.dailyFlags.visitedForbiddenLocation) threat += 6;
+    if (gameState.dailyFlags.foundClueToday) threat += 2;
+
+    // Cozy activities DECREASE threat (you seem harmless)
+    if (gameState.dailyFlags.harvestedToday) threat -= 2;
+    if (gameState.dailyFlags.giftedToday) threat -= 3;
+    if (gameState.dailyFlags.soldToday) threat -= 1;
+    if (gameState.dailyFlags.talkedToVillager) threat -= 1;
+
+    // Clue milestones give small bonuses (you're making progress)
+    if (gameState.clues.length >= 10 && !gameState.clueBonus10) {
+        threat -= 3;
+        gameState.clueBonus10 = true;
+    }
+
+    return Math.max(0, threat); // Never negative
+}
+
+// Reset daily activity flags
+function resetDailyFlags() {
+    gameState.dailyFlags = {
+        harvestedToday: false,
+        giftedToday: false,
+        soldToday: false,
+        talkedToVillager: false,
+        askedAboutMurder: false,
+        visitedForbiddenLocation: false,
+        foundClueToday: false
+    };
+}
+
+// Get a day message based on how the day went
+function getDayMessage(threatChange) {
+    if (threatChange <= 0) {
+        return "A peaceful day on the farm. The village seems calm, almost idyllic. But you know better.";
+    } else if (threatChange <= 3) {
+        return "A new day dawns. The village stirs with its usual rhythms, but watchful eyes follow your movements.";
+    } else if (threatChange <= 6) {
+        return "You sense tension in the air. Conversations stop when you approach. Someone is watching.";
+    } else {
+        return "The village feels dangerous today. You've stirred something up. They know you're getting close.";
+    }
 }
 
 function handlePlotClick(index) {
@@ -1565,7 +1876,14 @@ function handlePlotClick(index) {
         plot.state = 'empty';
         plot.crop = null;
         plot.growthProgress = 0;
+        gameState.dailyFlags.harvestedToday = true; // Track cozy activity
         showToast(`Harvested ${CROPS[crop].icon} ${CROPS[crop].name}!`);
+
+        // Show narrative hint if this crop has a story use
+        if (CROP_USES[crop] && Math.random() < 0.5) {
+            setTimeout(() => showToast(CROP_USES[crop].hint, 3000), 1000);
+        }
+
         renderFarmGrid();
         renderSeedInventory();
     } else if (plot.state === 'empty' && gameState.selectedSeed) {
@@ -1594,6 +1912,7 @@ function sellCrop(type) {
         const price = CROPS[type].sellPrice * count;
         gameState.coins += price;
         gameState.inventory.crops[type] = 0;
+        gameState.dailyFlags.soldToday = true; // Track cozy activity
         showToast(`Sold ${count} ${CROPS[type].name}(s) for ${price}g!`);
         renderSeedInventory();
         renderShop();
@@ -1608,6 +1927,7 @@ function sellFish(type) {
         const price = fish.sellPrice * count;
         gameState.coins += price;
         gameState.inventory.fish[type] = 0;
+        gameState.dailyFlags.soldToday = true; // Track cozy activity
         showToast(`Sold ${count} ${fish.name}(s) for ${price}g!`);
         renderSeedInventory();
         renderShop();
@@ -1622,6 +1942,7 @@ function sellOre(type) {
         const price = ore.sellPrice * count;
         gameState.coins += price;
         gameState.inventory.ore[type] = 0;
+        gameState.dailyFlags.soldToday = true; // Track cozy activity
         showToast(`Sold ${count} ${ore.name}(s) for ${price}g!`);
         renderSeedInventory();
         renderShop();
@@ -1707,41 +2028,118 @@ function updateVillagerButtons(villager) {
     }
 }
 
+// Contextual dialogue - villagers react to what you've discovered
+function getContextualDialogue(villager) {
+    const v = villager;
+    const items = gameState.inventory.items;
+    const clues = gameState.clues;
+
+    // React to death certificate (major evidence)
+    if (items.includes('death_certificate')) {
+        if (v.id === 'doctor') {
+            return "You found it. Now you know my shame. I falsified that certificate because Edmund made me. Your uncle deserved better.";
+        }
+        if (v.id === 'mayor') {
+            return "Where did you get that? It means nothing. Heart failure. That's what the doctor wrote. That's the truth.";
+        }
+        if (v.id === 'librarian') {
+            return "The death certificate? Thomas knew it was fake. He was so close to proving murder. Now you can finish what he started.";
+        }
+    }
+
+    // React to burial map
+    if (items.includes('burial_map')) {
+        if (v.id === 'farmer') {
+            return "You have my map. Good. I'm tired of carrying this alone. Dig them up. Let them rest properly.";
+        }
+        if (v.id === 'mayor') {
+            gameState.dailyFlags.askedAboutMurder = true; // Confrontational
+            return "What's that you're holding? A map? Of what? You're making dangerous accusations with your silence.";
+        }
+    }
+
+    // React to ritual dates
+    if (items.includes('ritual_dates')) {
+        if (v.id === 'librarian') {
+            return "You found the pattern. Every twenty years... 1952, 1967, 1987, 2006. And now 2026. We're running out of time.";
+        }
+        if (v.id === 'herbalist') {
+            return "The ritual dates? I've seen those symbols in my grandmother's journals. She tried to stop it once. They silenced her too.";
+        }
+    }
+
+    // React to having visited the north field
+    if (gameState.locationsUnlocked.includes('northfield')) {
+        if (v.id === 'farmer') {
+            return "You went to the north field. I can see it in your eyes. Now you know what I've lived with for twenty years.";
+        }
+        if (v.id === 'baker' && v.trust >= 40) {
+            return "You found the field where they buried her. My sister. Marie. I've never been able to go there myself.";
+        }
+    }
+
+    // React to strange ore
+    if (gameState.inventory.ore.strange_ore > 0) {
+        if (v.id === 'blacksmith') {
+            return "You found that ore? My grandfather warned me about those veins. 'Never dig too deep,' he said. He was right.";
+        }
+    }
+
+    // React to ghost carp vision
+    if (clues.some(c => c.text.includes('drowned in the pond'))) {
+        if (v.id === 'librarian') {
+            return "The ghost carp showed you, didn't it? How father died. Drowned in that pond. I always suspected, but now we know.";
+        }
+        if (v.id === 'farmer') {
+            return "The pond... I was there that night, you know. When they drowned Ezekiel. I was too scared to stop them. God forgive me.";
+        }
+    }
+
+    return null; // Fall back to standard dialogue
+}
+
 function talkToVillager() {
     const v = gameState.currentVillager;
     if (!v || v.talkedToday) return;
 
     v.talkedToday = true;
     v.trust = Math.min(100, v.trust + 8);
+    gameState.dailyFlags.talkedToVillager = true; // Track cozy activity
 
     // First conversation should be about your uncle
     // Track if we've had the intro conversation
     if (!v.hadIntroConversation) {
         v.hadIntroConversation = true;
+        gameState.dailyFlags.askedAboutMurder = true; // First conversations ask about uncle
         const introResponse = v.dialogues.aboutUncle || v.dialogues.greeting;
         document.getElementById('villager-dialogue').textContent = `"${introResponse}"`;
 
         // Add a clue about what they said
         if (v.helpfulInfo && Math.random() < 0.5) {
             addClue(v.name.split(' ')[0], v.helpfulInfo);
+            gameState.dailyFlags.foundClueToday = true;
             showToast('New information learned!');
         }
     } else {
         // Subsequent conversations reveal more based on trust
-        let response;
-        if (v.trust >= 60 && v.dialogues.trust50) {
-            response = v.dialogues.trust50;
-        } else if (v.trust >= 30 && v.dialogues.trust20) {
-            response = v.dialogues.trust20;
-        } else {
-            // Mix of story hints and personality
-            const storyHints = [
-                v.dialogues.aboutUncle,
-                `"Your grandfather... I remember him. He was asking questions too, before he vanished."`,
-                `"Thomas came to see me, you know. The week before he died. He seemed scared."`,
-                `"Be careful who you trust in Hollow Creek. Some secrets are buried deep."`
-            ];
-            response = storyHints[Math.floor(Math.random() * storyHints.length)];
+        // Use contextual dialogue if available
+        let response = getContextualDialogue(v);
+
+        if (!response) {
+            if (v.trust >= 60 && v.dialogues.trust50) {
+                response = v.dialogues.trust50;
+            } else if (v.trust >= 30 && v.dialogues.trust20) {
+                response = v.dialogues.trust20;
+            } else {
+                // Mix of story hints and personality
+                const storyHints = [
+                    v.dialogues.aboutUncle,
+                    `"Your grandfather... I remember him. He was asking questions too, before he vanished."`,
+                    `"Thomas came to see me, you know. The week before he died. He seemed scared."`,
+                    `"Be careful who you trust in Hollow Creek. Some secrets are buried deep."`
+                ];
+                response = storyHints[Math.floor(Math.random() * storyHints.length)];
+            }
         }
         document.getElementById('villager-dialogue').textContent = `"${response}"`;
     }
@@ -1857,6 +2255,11 @@ function giveGift(itemType, category = 'crop') {
 
     inventory[itemType]--;
     v.giftedToday = true;
+    gameState.dailyFlags.giftedToday = true; // Track cozy activity
+
+    // Track gift count per villager for relationship milestones
+    if (!gameState.giftCounts) gameState.giftCounts = {};
+    gameState.giftCounts[v.id] = (gameState.giftCounts[v.id] || 0) + 1;
 
     let trustGain = itemData.giftValue;
     let response;
@@ -1993,6 +2396,12 @@ function travelTo(locId) {
     gameState.currentLocation = locId;
     const loc = LOCATIONS[locId];
 
+    // Track forbidden location visits (increases threat)
+    const forbiddenLocations = ['northfield', 'ruins', 'mineDeep'];
+    if (forbiddenLocations.includes(locId)) {
+        gameState.dailyFlags.visitedForbiddenLocation = true;
+    }
+
     // Check for special activities
     if (loc.canFish) {
         showFishingOption(locId);
@@ -2073,6 +2482,18 @@ function goFishing() {
             message += ` ${caught.hint}`;
         }
 
+        // Check for clue fragment from this fish
+        if (caught.clueFragment) {
+            const fragment = caught.clueFragment;
+            if (!fragment.requires || fragment.requires(gameState)) {
+                if (!gameState.clues.some(c => c.text === fragment.text)) {
+                    addClue('Fishing Discovery', fragment.text);
+                    gameState.dailyFlags.foundClueToday = true;
+                    message += `\n\n${fragment.text}`;
+                }
+            }
+        }
+
         showEvent(caught.icon, 'Catch!', message, [
             { text: 'Nice!', effectId: caught.special ? `caught_${caught.id}` : null }
         ]);
@@ -2083,6 +2504,7 @@ function goFishing() {
             for (const disc of loc.discoveries) {
                 if (Math.random() < disc.chance && !gameState.clues.some(c => c.text === disc.clue)) {
                     addClue('Fishing', disc.clue);
+                    gameState.dailyFlags.foundClueToday = true;
                     break;
                 }
             }
@@ -2164,6 +2586,18 @@ function goMining(mineLevel = 1) {
             message += ` ${found.hint}`;
         }
 
+        // Check for clue fragment from this ore
+        if (found.clueFragment) {
+            const fragment = found.clueFragment;
+            if (!fragment.requires || fragment.requires(gameState)) {
+                if (!gameState.clues.some(c => c.text === fragment.text)) {
+                    addClue('Mining Discovery', fragment.text);
+                    gameState.dailyFlags.foundClueToday = true;
+                    message += `\n\n${fragment.text}`;
+                }
+            }
+        }
+
         showEvent(found.icon, 'Strike!', message, [
             { text: 'Pocket it', effectId: found.special ? `found_${found.id}` : null }
         ]);
@@ -2174,6 +2608,7 @@ function goMining(mineLevel = 1) {
             for (const disc of loc.discoveries) {
                 if (Math.random() < disc.chance && !gameState.clues.some(c => c.text === disc.clue)) {
                     addClue('Mining', disc.clue);
+                    gameState.dailyFlags.foundClueToday = true;
                     break;
                 }
             }
@@ -2362,8 +2797,14 @@ function addClue(source, text) {
         text: text
     });
 
+    // Track that we found a clue today (affects threat calculation)
+    if (gameState.dailyFlags) {
+        gameState.dailyFlags.foundClueToday = true;
+    }
+
     renderClues();
     checkLocationUnlocks();
+    checkForEvents(); // Check if this clue triggers a new event
 }
 
 function modifyTrust(villagerId, amount) {
